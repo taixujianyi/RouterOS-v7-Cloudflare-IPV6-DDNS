@@ -1,0 +1,43 @@
+########修改并复制下面的内容到ros -- system -- script########
+
+:local WAN6Interface "填写IPV6的接口";
+
+:local CFDomain "填写二级域名";
+
+:local CFEmail "填写邮箱";
+:local CFGlobalAPIKey "填写Global API Key";
+
+:local CFZoneId "填写Zone ID";
+:local CFDomainId "填写Domain ID";
+
+:global ResolvedIP6 "";
+:set ResolvedIP6 [:resolve $CFDomain];
+
+#获取公网IPv6（DHCP方式）以及域名IPv6
+#若您通过pppoe方式获得v6地址，请修改下面 获取WanIP6变量 的部分代码。
+:global WanIP6 "";
+:if ([/ipv6 dhcp-client get [find interface=$WAN6Interface] status] = "bound") do={
+    :set WanIP6 [/ipv6 dhcp-client get [find interface=$WAN6Interface status=bound] address];
+    #:log info ("CF: 当前WAN口公网IPv6： $WanIP6");
+    #目前我通过DHCPv6方式提取到的WanIP6的字符串由“v6地址, address expires after"两部分组成。
+    #下面的代码用pick提取从位置0到位置", "的所有字符串。根据实际获得的字符串（自己用命令:log info ("$WanIP6");实际输出一下WanIP6的值到底是什么），请灵活选取下面find的双引号中的参数来获取得到真正的v6地址。 
+    :set WanIP6 [:pick $WanIP6 0 [:find $WanIP6 ", "]];
+} else={
+    :log info ("CF: 本机没有启用IPv6或配置不正确")
+}
+
+:log info ("CF: 解析IPv6域名： $ResolvedIP6");
+:log info ("CF: 当前WAN口公网IPv6： $WanIP6");
+
+:local url    "https://api.cloudflare.com/client/v4/zones/$CFZoneId/dns_records/$CFDomainId"
+:local header "X-Auth-Email: $CFEmail, X-Auth-Key: $CFGlobalAPIKey, content-type: application/json"
+:local data   "{\"type\":\"AAAA\",\"name\":\"$CFDomain\",\"content\":\"$WanIP6\",\"ttl\":60}"
+
+:if ($ResolvedIP6 != $WanIP6) do={
+/tool fetch http-method=put mode=https http-header-field=$header http-data=$data url=$url as-value output=user;
+:delay 2s;
+/ip dns cache flush;
+:log info "CF: 成功更新WAN口IPv6公网地址！"
+} else={
+        :log info "CF: WAN口IPv6公网地址与解析的地址匹配，无需更新！"
+}
